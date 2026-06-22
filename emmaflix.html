@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Em's Bingelog</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230f0f0f'/><text x='50' y='72' font-size='62' font-family='Arial' font-weight='800' fill='%23e50914' text-anchor='middle'>B</text></svg>">
+<style>html,body{margin:0;background:#0f0f0f;}#root{min-height:100vh;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script>
+const {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback
+} = React;
+
+// ---------- inline icons (no dependencies) ----------
+const ICONS = {
+  Plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  Search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  Star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  X: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  Pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  Trash2: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  Film: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
+  Tv: '<rect width="20" height="15" x="2" y="7" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/>',
+  Play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  Check: '<path d="M20 6 9 17l-5-5"/>',
+  Minus: '<path d="M5 12h14"/>',
+  ChevronRight: '<path d="m9 18 6-6-6-6"/>'
+};
+function mkIcon(key) {
+  return function ({
+    size = 16,
+    className,
+    fill = "none",
+    strokeWidth = 2,
+    ...rest
+  }) {
+    return React.createElement("svg", {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill,
+      stroke: "currentColor",
+      strokeWidth,
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      className,
+      dangerouslySetInnerHTML: {
+        __html: ICONS[key]
+      },
+      ...rest
+    });
+  };
+}
+const Plus = mkIcon("Plus"),
+  Search = mkIcon("Search"),
+  Star = mkIcon("Star"),
+  X = mkIcon("X"),
+  Pencil = mkIcon("Pencil"),
+  Trash2 = mkIcon("Trash2"),
+  Film = mkIcon("Film"),
+  Tv = mkIcon("Tv"),
+  Play = mkIcon("Play"),
+  Check = mkIcon("Check"),
+  Minus = mkIcon("Minus"),
+  ChevronRight = mkIcon("ChevronRight");
+
+// ---------- storage helpers (private, on-device) ----------
+const STORE_KEY = "emsbingelog:shows:v1";
+function loadShowsFromStore() {
+  try {
+    const v = localStorage.getItem(STORE_KEY);
+    return v ? JSON.parse(v) : [];
+  } catch (e) {
+    return [];
+  }
+}
+function saveShowsToStore(shows) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(shows));
+  } catch (e) {
+    console.error("Could not save your list:", e);
+  }
+}
+
+// ---------- config ----------
+const STATUSES = [{
+  key: "watching",
+  label: "Continue Watching",
+  color: "#e50914"
+}, {
+  key: "plan",
+  label: "My List",
+  color: "#9aa0a6"
+}, {
+  key: "completed",
+  label: "Completed",
+  color: "#46d369"
+}, {
+  key: "hold",
+  label: "On Hold",
+  color: "#e6b800"
+}, {
+  key: "dropped",
+  label: "Dropped",
+  color: "#777777"
+}];
+const STATUS_MAP = Object.fromEntries(STATUSES.map(s => [s.key, s]));
+const GRADIENTS = [["#7b2ff7", "#1f0f3d"], ["#e50914", "#3a0a0c"], ["#0f9b8e", "#06302b"], ["#f7971e", "#3d2a06"], ["#2b5876", "#0d1b24"], ["#c31432", "#240b36"], ["#1d976c", "#0b2e22"], ["#614385", "#1c0f29"]];
+function gradientFor(title) {
+  let h = 0;
+  for (let i = 0; i < (title || "x").length; i++) h = h * 31 + title.charCodeAt(i) >>> 0;
+  return GRADIENTS[h % GRADIENTS.length];
+}
+function initials(title) {
+  return (title || "?").split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase();
+}
+function newId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// ---------- image load status (re-checks whenever the URL changes) ----------
+function useImgOk(url) {
+  const [ok, setOk] = useState(false);
+  useEffect(() => {
+    if (!url) {
+      setOk(false);
+      return;
+    }
+    let live = true;
+    const img = new Image();
+    img.onload = () => {
+      if (live) setOk(true);
+    };
+    img.onerror = () => {
+      if (live) setOk(false);
+    };
+    img.src = url;
+    return () => {
+      live = false;
+    };
+  }, [url]);
+  return ok;
+}
+
+// ---------- poster ----------
+function Poster({
+  show,
+  big
+}) {
+  const [g1, g2] = gradientFor(show.title);
+  const [status, setStatus] = useState("load");
+  useEffect(() => {
+    setStatus(show.poster ? "load" : "none");
+  }, [show.poster]);
+  const showFallback = !show.poster || status === "err";
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-poster",
+    style: big ? {
+      borderRadius: 6
+    } : undefined
+  }, show.poster && /*#__PURE__*/React.createElement("img", {
+    key: show.poster,
+    src: show.poster,
+    alt: show.title,
+    referrerPolicy: "no-referrer",
+    className: "ef-poster-img",
+    style: {
+      opacity: status === "ok" ? 1 : 0
+    },
+    onLoad: () => setStatus("ok"),
+    onError: () => setStatus("err")
+  }), showFallback && /*#__PURE__*/React.createElement("div", {
+    className: "ef-poster-fallback",
+    style: {
+      background: `linear-gradient(150deg, ${g1}, ${g2})`
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ef-poster-initials"
+  }, initials(show.title)), /*#__PURE__*/React.createElement("span", {
+    className: "ef-poster-fbtitle"
+  }, show.title)));
+}
+
+// ---------- stars ----------
+function Stars({
+  value = 0,
+  size = 13,
+  onChange
+}) {
+  const interactive = !!onChange;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-stars",
+    style: {
+      gap: size * 0.12
+    }
+  }, [1, 2, 3, 4, 5].map(i => {
+    const fill = Math.max(0, Math.min(1, value - (i - 1)));
+    return /*#__PURE__*/React.createElement("span", {
+      key: i,
+      className: "ef-star-wrap",
+      style: {
+        width: size,
+        height: size
+      }
+    }, /*#__PURE__*/React.createElement(Star, {
+      size: size,
+      className: "ef-star-bg",
+      strokeWidth: 1.5
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "ef-star-fillclip",
+      style: {
+        width: `${fill * 100}%`
+      }
+    }, /*#__PURE__*/React.createElement(Star, {
+      size: size,
+      className: "ef-star-fg",
+      strokeWidth: 1.5
+    })), interactive && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "ef-star-hit",
+      style: {
+        left: 0,
+        width: "50%"
+      },
+      onClick: () => onChange(i - 0.5),
+      "aria-label": `${i - 0.5} stars`
+    }), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "ef-star-hit",
+      style: {
+        left: "50%",
+        width: "50%"
+      },
+      onClick: () => onChange(i),
+      "aria-label": `${i} stars`
+    })));
+  }));
+}
+
+// ---------- episode line ----------
+function epLabel(show) {
+  if (show.type === "Movie") return "Film";
+  return `S${show.season || 1} · E${show.episode || 0}`;
+}
+function seasonProgress(show) {
+  if (show.type === "Movie" || !show.episodesPerSeason) return null;
+  const total = show.episodesPerSeason;
+  const cur = Math.min(show.episode || 0, total);
+  return {
+    pct: total ? cur / total * 100 : 0,
+    cur,
+    total
+  };
+}
+
+// ---------- card ----------
+function Card({
+  show,
+  onEdit,
+  onDelete,
+  onBump,
+  index = 0
+}) {
+  const st = STATUS_MAP[show.status] || STATUS_MAP.plan;
+  const prog = seasonProgress(show);
+  const isWatching = show.status === "watching";
+  const isSeries = show.type !== "Movie";
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-card ef-reveal",
+    style: {
+      animationDelay: `${Math.min(index, 14) * 0.045}s`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-art"
+  }, /*#__PURE__*/React.createElement(Poster, {
+    show: show
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "ef-badge",
+    style: {
+      background: st.color
+    }
+  }, st.key === "watching" ? "Watching" : st.label), /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-hover"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-hover-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "ef-iconbtn",
+    title: "Edit",
+    onClick: () => onEdit(show)
+  }, /*#__PURE__*/React.createElement(Pencil, {
+    size: 15
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "ef-iconbtn",
+    title: "Remove",
+    onClick: () => onDelete(show)
+  }, /*#__PURE__*/React.createElement(Trash2, {
+    size: 15
+  }))), isWatching && isSeries && /*#__PURE__*/React.createElement("button", {
+    className: "ef-bump-big",
+    onClick: () => onBump(show.id, 1)
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 16
+  }), " Episode watched")), prog && /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-progress"
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: `${prog.pct}%`
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-meta"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-title",
+    title: show.title
+  }, show.title), /*#__PURE__*/React.createElement("div", {
+    className: "ef-card-sub"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ef-card-ep"
+  }, isSeries ? /*#__PURE__*/React.createElement(Tv, {
+    size: 11
+  }) : /*#__PURE__*/React.createElement(Film, {
+    size: 11
+  }), epLabel(show)), show.rating > 0 && /*#__PURE__*/React.createElement(Stars, {
+    value: show.rating,
+    size: 11
+  })), isWatching && isSeries && /*#__PURE__*/React.createElement("div", {
+    className: "ef-quickrow"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "ef-bump",
+    onClick: () => onBump(show.id, 1),
+    title: "Add one episode"
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 13
+  }), " 1 ep"), /*#__PURE__*/React.createElement("button", {
+    className: "ef-bump-minus",
+    onClick: () => onBump(show.id, -1),
+    title: "Undo one episode"
+  }, /*#__PURE__*/React.createElement(Minus, {
+    size: 13
+  })))));
+}
+
+// ---------- hero ----------
+function Hero({
+  show,
+  onEdit,
+  onBump
+}) {
+  const [g1, g2] = gradientFor(show.title);
+  const prog = seasonProgress(show);
+  const isSeries = show.type !== "Movie";
+  const ok = useImgOk(show.poster);
+  const bg = ok ? `linear-gradient(90deg, rgba(15,15,15,0.97) 0%, rgba(15,15,15,0.6) 45%, rgba(15,15,15,0.2) 100%), url(${show.poster})` : `linear-gradient(90deg, rgba(15,15,15,0.95), rgba(15,15,15,0.3)), linear-gradient(135deg, ${g1}, ${g2})`;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero",
+    style: {
+      backgroundImage: bg
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero-inner"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero-eyebrow"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ef-hero-dot"
+  }), " Currently Watching"), /*#__PURE__*/React.createElement("h1", {
+    className: "ef-hero-title"
+  }, show.title), /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero-meta"
+  }, show.rating > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "ef-match"
+  }, Math.round(show.rating * 20), "% your pick"), /*#__PURE__*/React.createElement("span", null, isSeries ? "Series" : "Film"), isSeries && /*#__PURE__*/React.createElement("span", null, epLabel(show)), show.genres?.length > 0 && /*#__PURE__*/React.createElement("span", null, show.genres.slice(0, 3).join(" · "))), prog && /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero-progress"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero-bar"
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: `${prog.pct}%`
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "ef-hero-progtext"
+  }, prog.cur, " / ", prog.total, " this season")), /*#__PURE__*/React.createElement("div", {
+    className: "ef-hero-actions"
+  }, isSeries ? /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-primary",
+    onClick: () => onBump(show.id, 1)
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 18
+  }), " I watched an episode") : /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-primary",
+    onClick: () => onEdit(show)
+  }, /*#__PURE__*/React.createElement(Play, {
+    size: 18,
+    fill: "currentColor"
+  }), " Details"), /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-ghost",
+    onClick: () => onEdit(show)
+  }, /*#__PURE__*/React.createElement(Pencil, {
+    size: 16
+  }), " Edit"))));
+}
+
+// ---------- modal ----------
+const EMPTY = {
+  title: "",
+  type: "Series",
+  poster: "",
+  status: "watching",
+  rating: 0,
+  season: 1,
+  episode: 0,
+  episodesPerSeason: "",
+  genresText: "",
+  notes: ""
+};
+function PosterPreview({
+  url
+}) {
+  const [status, setStatus] = useState("none");
+  useEffect(() => {
+    setStatus(url ? "load" : "none");
+  }, [url]);
+  if (!url) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "ef-pprev-empty"
+    }, "No link added — a cover will be generated from the title.");
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-pprev"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-pprev-thumb"
+  }, /*#__PURE__*/React.createElement("img", {
+    key: url,
+    src: url,
+    alt: "",
+    referrerPolicy: "no-referrer",
+    style: {
+      opacity: status === "ok" ? 1 : 0
+    },
+    onLoad: () => setStatus("ok"),
+    onError: () => setStatus("err")
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "ef-pprev-msg"
+  }, status === "load" && /*#__PURE__*/React.createElement("span", {
+    className: "ef-pprev-load"
+  }, "Checking link…"), status === "ok" && /*#__PURE__*/React.createElement("span", {
+    className: "ef-pprev-ok"
+  }, /*#__PURE__*/React.createElement(Check, {
+    size: 13
+  }), " Image loads — looks good"), status === "err" && /*#__PURE__*/React.createElement("span", {
+    className: "ef-pprev-err"
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 13
+  }), " This link won't load as an image. Try a direct .jpg/.png link (right-click an image → Copy image address).")));
+}
+function Modal({
+  initial,
+  onSave,
+  onClose
+}) {
+  const [f, setF] = useState(initial);
+  const set = (k, v) => setF(p => ({
+    ...p,
+    [k]: v
+  }));
+  const isSeries = f.type === "Series";
+  const submit = () => {
+    if (!f.title.trim()) return;
+    onSave({
+      ...f,
+      title: f.title.trim(),
+      poster: f.poster.trim(),
+      season: isSeries ? Math.max(1, parseInt(f.season) || 1) : 1,
+      episode: isSeries ? Math.max(0, parseInt(f.episode) || 0) : 0,
+      episodesPerSeason: isSeries && f.episodesPerSeason !== "" ? Math.max(0, parseInt(f.episodesPerSeason) || 0) : "",
+      genres: f.genresText.split(",").map(g => g.trim()).filter(Boolean)
+    });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-modal-overlay",
+    onMouseDown: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-modal",
+    onMouseDown: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "ef-modal-close",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 20
+  })), /*#__PURE__*/React.createElement("h2", {
+    className: "ef-modal-h"
+  }, initial.id ? "Edit title" : "Add a title"), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Title"), /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    value: f.title,
+    onChange: e => set("title", e.target.value),
+    placeholder: "e.g. Stranger Things"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "ef-typetoggle"
+  }, ["Series", "Movie"].map(t => /*#__PURE__*/React.createElement("button", {
+    key: t,
+    type: "button",
+    className: `ef-toggle ${f.type === t ? "on" : ""}`,
+    onClick: () => set("type", t)
+  }, t === "Series" ? /*#__PURE__*/React.createElement(Tv, {
+    size: 14
+  }) : /*#__PURE__*/React.createElement(Film, {
+    size: 14
+  }), " ", t))), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Poster image URL ", /*#__PURE__*/React.createElement("em", null, "(optional)")), /*#__PURE__*/React.createElement("input", {
+    value: f.poster,
+    onChange: e => set("poster", e.target.value),
+    placeholder: "Paste a direct image link ending in .jpg or .png"
+  })), /*#__PURE__*/React.createElement(PosterPreview, {
+    url: f.poster
+  }), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Status"), /*#__PURE__*/React.createElement("select", {
+    value: f.status,
+    onChange: e => set("status", e.target.value)
+  }, STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s.key,
+    value: s.key
+  }, s.key === "plan" ? "Plan to watch" : s.label)))), isSeries && /*#__PURE__*/React.createElement("div", {
+    className: "ef-row3"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Season"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "1",
+    value: f.season,
+    onChange: e => set("season", e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Episode"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    value: f.episode,
+    onChange: e => set("episode", e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Eps / season"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    value: f.episodesPerSeason,
+    onChange: e => set("episodesPerSeason", e.target.value),
+    placeholder: "opt."
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Your rating"), /*#__PURE__*/React.createElement("div", {
+    className: "ef-rate-row"
+  }, /*#__PURE__*/React.createElement(Stars, {
+    value: f.rating,
+    size: 26,
+    onChange: v => set("rating", v)
+  }), f.rating > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ef-clearrate",
+    onClick: () => set("rating", 0)
+  }, "clear"))), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Genres / tags ", /*#__PURE__*/React.createElement("em", null, "(comma separated)")), /*#__PURE__*/React.createElement("input", {
+    value: f.genresText,
+    onChange: e => set("genresText", e.target.value),
+    placeholder: "Sci-Fi, Thriller, Drama"
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "ef-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Notes"), /*#__PURE__*/React.createElement("textarea", {
+    rows: 2,
+    value: f.notes,
+    onChange: e => set("notes", e.target.value),
+    placeholder: "Where you left off, who recommended it, thoughts…"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "ef-modal-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-ghost",
+    onClick: onClose
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-primary",
+    onClick: submit,
+    disabled: !f.title.trim()
+  }, /*#__PURE__*/React.createElement(Check, {
+    size: 16
+  }), " ", initial.id ? "Save changes" : "Add to my list"))));
+}
+
+// ---------- main ----------
+function App() {
+  const [shows, setShows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [modal, setModal] = useState(null); // {initial}
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [flash, setFlash] = useState(null);
+  const [intro, setIntro] = useState(() => {
+    try {
+      return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    setShows(loadShowsFromStore());
+    setLoading(false);
+  }, []);
+  useEffect(() => {
+    if (!intro) return;
+    const t = setTimeout(() => setIntro(false), 2200);
+    return () => clearTimeout(t);
+  }, [intro]);
+  const persist = useCallback(next => {
+    setShows(next);
+    saveShowsToStore(next);
+  }, []);
+  const upsert = data => {
+    if (data.id) {
+      persist(shows.map(s => s.id === data.id ? {
+        ...s,
+        ...data,
+        updated: Date.now()
+      } : s));
+    } else {
+      persist([{
+        ...data,
+        id: newId(),
+        added: Date.now(),
+        updated: Date.now()
+      }, ...shows]);
+    }
+    setModal(null);
+  };
+  const removeShow = show => {
+    persist(shows.filter(s => s.id !== show.id));
+    setConfirmDel(null);
+  };
+  const bump = (id, delta) => {
+    persist(shows.map(s => {
+      if (s.id !== id) return s;
+      let ep = (s.episode || 0) + delta;
+      let season = s.season || 1;
+      const per = s.episodesPerSeason;
+      if (delta > 0 && per && ep > per) {
+        season += 1;
+        ep = 1;
+      }
+      if (delta < 0 && ep < 0) {
+        if (season > 1) {
+          season -= 1;
+          ep = per || 0;
+        } else ep = 0;
+      }
+      return {
+        ...s,
+        episode: ep,
+        season,
+        status: "watching",
+        updated: Date.now()
+      };
+    }));
+    if (delta > 0) {
+      const sh = shows.find(s => s.id === id);
+      setFlash(sh ? `Logged an episode of ${sh.title}` : "Episode logged");
+      setTimeout(() => setFlash(null), 1600);
+    }
+  };
+  const q = search.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return shows;
+    return shows.filter(s => s.title.toLowerCase().includes(q) || (s.genres || []).some(g => g.toLowerCase().includes(q)));
+  }, [shows, q]);
+  const grouped = useMemo(() => {
+    const m = {};
+    STATUSES.forEach(s => m[s.key] = []);
+    filtered.forEach(s => (m[s.status] || m.plan).push(s));
+    Object.values(m).forEach(arr => arr.sort((a, b) => (b.updated || 0) - (a.updated || 0)));
+    return m;
+  }, [filtered]);
+  const hero = grouped.watching[0] || grouped.plan[0] || grouped.completed[0] || null;
+  const stats = useMemo(() => {
+    const rated = shows.filter(s => s.rating > 0);
+    const avg = rated.length ? rated.reduce((a, s) => a + s.rating, 0) / rated.length : 0;
+    return {
+      total: shows.length,
+      watching: shows.filter(s => s.status === "watching").length,
+      completed: shows.filter(s => s.status === "completed").length,
+      avg
+    };
+  }, [shows]);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-root"
+  }, /*#__PURE__*/React.createElement("style", null, CSS), intro && /*#__PURE__*/React.createElement("div", {
+    className: "ef-intro",
+    onClick: () => setIntro(false),
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-intro-word"
+  }, /*#__PURE__*/React.createElement("span", null, "Em's"), " Bingelog")), /*#__PURE__*/React.createElement("header", {
+    className: "ef-nav"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-brand"
+  }, /*#__PURE__*/React.createElement("span", null, "Em's"), " Bingelog"), /*#__PURE__*/React.createElement("div", {
+    className: "ef-nav-right"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-search"
+  }, /*#__PURE__*/React.createElement(Search, {
+    size: 15
+  }), /*#__PURE__*/React.createElement("input", {
+    value: search,
+    onChange: e => setSearch(e.target.value),
+    placeholder: "Search titles or genres"
+  }), search && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setSearch("")
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 14
+  }))), /*#__PURE__*/React.createElement("button", {
+    className: "ef-add",
+    onClick: () => setModal({
+      ...EMPTY
+    })
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 16
+  }), " Add title"))), loading ? /*#__PURE__*/React.createElement("div", {
+    className: "ef-loading"
+  }, "Loading your list…") : shows.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "ef-empty"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-empty-mark"
+  }, /*#__PURE__*/React.createElement("span", null, "Em's"), " Bingelog"), /*#__PURE__*/React.createElement("h2", null, "Your watchlist is empty"), /*#__PURE__*/React.createElement("p", null, "Add the first show or film you're tracking. You'll get a one-tap button to log each episode as you go."), /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-primary",
+    onClick: () => setModal({
+      ...EMPTY
+    })
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 18
+  }), " Add your first title")) : /*#__PURE__*/React.createElement(React.Fragment, null, hero && /*#__PURE__*/React.createElement(Hero, {
+    show: hero,
+    onEdit: s => setModal({
+      ...toForm(s)
+    }),
+    onBump: bump
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "ef-statstrip"
+  }, /*#__PURE__*/React.createElement(Stat, {
+    n: stats.total,
+    l: "Titles"
+  }), /*#__PURE__*/React.createElement(Stat, {
+    n: stats.watching,
+    l: "Watching",
+    accent: "#e50914"
+  }), /*#__PURE__*/React.createElement(Stat, {
+    n: stats.completed,
+    l: "Completed",
+    accent: "#46d369"
+  }), /*#__PURE__*/React.createElement(Stat, {
+    n: stats.avg ? stats.avg.toFixed(1) : "—",
+    l: "Avg rating",
+    icon: true
+  })), /*#__PURE__*/React.createElement("main", {
+    className: "ef-rows"
+  }, STATUSES.map(st => {
+    const list = grouped[st.key];
+    if (!list || list.length === 0) return null;
+    return /*#__PURE__*/React.createElement("section", {
+      key: st.key,
+      className: "ef-rowsection"
+    }, /*#__PURE__*/React.createElement("h3", {
+      className: "ef-rowtitle"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "ef-rowdot",
+      style: {
+        background: st.color
+      }
+    }), st.label, /*#__PURE__*/React.createElement("span", {
+      className: "ef-rowcount"
+    }, list.length), /*#__PURE__*/React.createElement(ChevronRight, {
+      size: 16,
+      className: "ef-rowchev"
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "ef-rowscroll"
+    }, list.map((s, i) => /*#__PURE__*/React.createElement(Card, {
+      key: s.id,
+      show: s,
+      index: i,
+      onEdit: sh => setModal({
+        ...toForm(sh)
+      }),
+      onDelete: sh => setConfirmDel(sh),
+      onBump: bump
+    }))));
+  }), q && filtered.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "ef-noresults"
+  }, "No titles match “", search, "”."))), /*#__PURE__*/React.createElement("footer", {
+    className: "ef-footer"
+  }, "Private watchlist · saved automatically to this space"), modal && /*#__PURE__*/React.createElement(Modal, {
+    initial: modal,
+    onSave: upsert,
+    onClose: () => setModal(null)
+  }), confirmDel && /*#__PURE__*/React.createElement("div", {
+    className: "ef-modal-overlay",
+    onMouseDown: () => setConfirmDel(null)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-confirm",
+    onMouseDown: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("h3", null, "Remove “", confirmDel.title, "”?"), /*#__PURE__*/React.createElement("p", null, "This takes it off your watchlist for good."), /*#__PURE__*/React.createElement("div", {
+    className: "ef-modal-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-ghost",
+    onClick: () => setConfirmDel(null)
+  }, "Keep it"), /*#__PURE__*/React.createElement("button", {
+    className: "ef-btn-danger",
+    onClick: () => removeShow(confirmDel)
+  }, /*#__PURE__*/React.createElement(Trash2, {
+    size: 15
+  }), " Remove")))), flash && /*#__PURE__*/React.createElement("div", {
+    className: "ef-flash"
+  }, /*#__PURE__*/React.createElement(Check, {
+    size: 15
+  }), " ", flash));
+}
+function Stat({
+  n,
+  l,
+  accent,
+  icon
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ef-stat"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ef-stat-n",
+    style: accent ? {
+      color: accent
+    } : undefined
+  }, icon && /*#__PURE__*/React.createElement(Star, {
+    size: 16,
+    className: "ef-stat-star"
+  }), " ", n), /*#__PURE__*/React.createElement("div", {
+    className: "ef-stat-l"
+  }, l));
+}
+function toForm(s) {
+  return {
+    id: s.id,
+    title: s.title,
+    type: s.type || "Series",
+    poster: s.poster || "",
+    status: s.status,
+    rating: s.rating || 0,
+    season: s.season || 1,
+    episode: s.episode || 0,
+    episodesPerSeason: s.episodesPerSeason ?? "",
+    genresText: (s.genres || []).join(", "),
+    notes: s.notes || ""
+  };
+}
+
+// ---------- styles ----------
+const CSS = `
+.ef-root{--bg:#0f0f0f;--surface:#1b1b1b;--surface2:#242424;--red:#e50914;--text:#f3f3f3;--muted:#9aa0a6;--border:#2c2c2c;
+  background:var(--bg);color:var(--text);min-height:100vh;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+  margin:0;overflow-x:hidden;-webkit-font-smoothing:antialiased;}
+.ef-root *{box-sizing:border-box;}
+.ef-root button{font-family:inherit;cursor:pointer;}
+
+.ef-nav{position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:14px 4vw;background:linear-gradient(180deg,rgba(0,0,0,0.92),rgba(0,0,0,0.55) 75%,rgba(0,0,0,0));backdrop-filter:blur(2px);}
+.ef-brand{font-weight:800;font-size:24px;letter-spacing:-0.5px;color:var(--red);text-transform:uppercase;}
+.ef-brand span{color:#fff;}
+.ef-empty .ef-empty-mark span{color:#fff;}
+.ef-nav-right{display:flex;align-items:center;gap:12px;}
+.ef-search{display:flex;align-items:center;gap:8px;background:rgba(20,20,20,0.85);border:1px solid var(--border);
+  border-radius:4px;padding:8px 11px;color:var(--muted);transition:border .2s;}
+.ef-search:focus-within{border-color:#555;}
+.ef-search input{background:none;border:none;outline:none;color:var(--text);width:180px;font-size:13px;}
+.ef-search button{background:none;border:none;color:var(--muted);display:flex;padding:0;}
+.ef-add{display:flex;align-items:center;gap:6px;background:var(--red);color:#fff;border:none;border-radius:4px;
+  padding:9px 15px;font-weight:700;font-size:13px;transition:filter .15s,transform .1s;}
+.ef-add:hover{filter:brightness(1.12);} .ef-add:active{transform:scale(.97);}
+
+.ef-loading{padding:120px 4vw;color:var(--muted);font-size:15px;}
+
+.ef-empty{max-width:560px;margin:9vh auto;padding:0 6vw;text-align:center;}
+.ef-empty-mark{font-weight:800;font-size:32px;color:var(--red);text-transform:uppercase;letter-spacing:-1px;margin-bottom:26px;}
+.ef-empty h2{font-size:26px;margin:0 0 10px;font-weight:700;}
+.ef-empty p{color:var(--muted);line-height:1.6;margin:0 0 26px;font-size:15px;}
+
+.ef-hero{position:relative;margin-top:-72px;min-height:clamp(420px,62vh,560px);display:flex;align-items:flex-end;
+  background-size:cover;background-position:center top;}
+.ef-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 55%,var(--bg));pointer-events:none;}
+.ef-hero-inner{position:relative;z-index:2;padding:0 4vw 52px;max-width:680px;}
+.ef-hero-eyebrow{display:flex;align-items:center;gap:8px;color:#fff;font-weight:700;font-size:12px;letter-spacing:2px;
+  text-transform:uppercase;margin-bottom:14px;}
+.ef-hero-dot{width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red);}
+.ef-hero-title{font-size:clamp(34px,6vw,62px);line-height:1.02;margin:0 0 16px;font-weight:800;letter-spacing:-1px;
+  text-shadow:0 2px 24px rgba(0,0,0,.6);}
+.ef-hero-meta{display:flex;flex-wrap:wrap;align-items:center;gap:14px;color:#d4d4d4;font-size:14px;margin-bottom:18px;}
+.ef-match{color:#46d369;font-weight:700;}
+.ef-hero-progress{display:flex;align-items:center;gap:12px;margin-bottom:22px;max-width:420px;}
+.ef-hero-bar{flex:1;height:5px;background:rgba(255,255,255,.25);border-radius:3px;overflow:hidden;}
+.ef-hero-bar span{display:block;height:100%;background:var(--red);}
+.ef-hero-progtext{color:var(--muted);font-size:12px;white-space:nowrap;}
+.ef-hero-actions{display:flex;gap:12px;flex-wrap:wrap;}
+
+.ef-btn-primary{display:inline-flex;align-items:center;gap:9px;background:var(--red);color:#fff;border:none;
+  border-radius:5px;padding:12px 22px;font-weight:700;font-size:15px;transition:filter .15s,transform .1s;}
+.ef-btn-primary:hover{filter:brightness(1.12);} .ef-btn-primary:active{transform:scale(.98);}
+.ef-btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.ef-btn-ghost{display:inline-flex;align-items:center;gap:8px;background:rgba(120,120,120,.32);color:#fff;border:none;
+  border-radius:5px;padding:12px 20px;font-weight:600;font-size:14px;transition:background .15s;}
+.ef-btn-ghost:hover{background:rgba(120,120,120,.5);}
+.ef-btn-danger{display:inline-flex;align-items:center;gap:7px;background:var(--red);color:#fff;border:none;border-radius:5px;
+  padding:11px 18px;font-weight:700;font-size:14px;}
+.ef-btn-danger:hover{filter:brightness(1.12);}
+
+.ef-statstrip{display:flex;gap:10px;flex-wrap:wrap;padding:6px 4vw 4px;}
+.ef-stat{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 20px;min-width:110px;flex:1;}
+.ef-stat-n{font-size:26px;font-weight:800;display:flex;align-items:center;gap:5px;}
+.ef-stat-star{color:#f5c518;}
+.ef-stat-l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
+
+.ef-rows{padding:18px 0 40px;}
+.ef-rowsection{margin-bottom:30px;}
+.ef-rowtitle{display:flex;align-items:center;gap:9px;font-size:17px;font-weight:700;margin:0 0 14px;padding:0 4vw;}
+.ef-rowdot{width:9px;height:9px;border-radius:2px;}
+.ef-rowcount{color:var(--muted);font-size:12px;font-weight:600;background:var(--surface2);padding:1px 8px;border-radius:10px;}
+.ef-rowchev{color:var(--muted);}
+.ef-rowscroll{display:flex;gap:14px;overflow-x:auto;padding:6px 4vw 14px;scroll-snap-type:x proximity;}
+.ef-rowscroll::-webkit-scrollbar{height:8px;}
+.ef-rowscroll::-webkit-scrollbar-thumb{background:#3a3a3a;border-radius:4px;}
+.ef-rowscroll::-webkit-scrollbar-track{background:transparent;}
+
+.ef-card{flex:0 0 168px;width:168px;scroll-snap-align:start;}
+.ef-card-art{position:relative;border-radius:6px;overflow:hidden;transition:transform .22s ease;background:var(--surface);}
+.ef-card:hover .ef-card-art{transform:scale(1.045);box-shadow:0 12px 30px rgba(0,0,0,.6);}
+.ef-poster{position:relative;width:100%;aspect-ratio:2/3;background:var(--surface2);}
+.ef-poster-img{width:100%;height:100%;object-fit:cover;display:block;}
+.ef-poster-fallback{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:12px;text-align:center;}
+.ef-poster-initials{font-size:40px;font-weight:800;color:rgba(255,255,255,.92);}
+.ef-poster-fbtitle{font-size:12px;color:rgba(255,255,255,.82);line-height:1.25;}
+.ef-badge{position:absolute;top:8px;left:8px;font-size:10px;font-weight:700;color:#fff;padding:3px 8px;border-radius:3px;
+  text-transform:uppercase;letter-spacing:.5px;box-shadow:0 2px 6px rgba(0,0,0,.4);}
+.ef-card-hover{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;
+  padding:8px;opacity:0;background:linear-gradient(180deg,rgba(0,0,0,.45),transparent 40%,rgba(0,0,0,.55));transition:opacity .2s;}
+.ef-card:hover .ef-card-hover{opacity:1;}
+.ef-card-hover-row{display:flex;gap:6px;}
+.ef-iconbtn{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;border:none;
+  background:rgba(20,20,20,.85);color:#fff;border:1px solid rgba(255,255,255,.35);}
+.ef-iconbtn:hover{background:#fff;color:#111;}
+.ef-bump-big{width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--red);color:#fff;
+  border:none;border-radius:4px;padding:9px;font-weight:700;font-size:12px;}
+.ef-bump-big:hover{filter:brightness(1.12);}
+.ef-card-progress{position:absolute;bottom:0;left:0;right:0;height:4px;background:rgba(0,0,0,.55);}
+.ef-card-progress span{display:block;height:100%;background:var(--red);}
+
+.ef-card-meta{padding:9px 2px 0;}
+.ef-card-title{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ef-card-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;}
+.ef-card-ep{display:flex;align-items:center;gap:4px;color:var(--muted);font-size:11.5px;font-weight:600;}
+.ef-quickrow{display:flex;gap:6px;margin-top:8px;}
+.ef-bump{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;background:var(--red);color:#fff;border:none;
+  border-radius:4px;padding:7px;font-weight:700;font-size:12px;transition:filter .15s,transform .1s;}
+.ef-bump:hover{filter:brightness(1.13);} .ef-bump:active{transform:scale(.95);}
+.ef-bump-minus{display:flex;align-items:center;justify-content:center;width:34px;background:var(--surface2);color:var(--muted);
+  border:1px solid var(--border);border-radius:4px;}
+.ef-bump-minus:hover{color:#fff;border-color:#555;}
+
+.ef-stars{display:inline-flex;align-items:center;}
+.ef-star-wrap{position:relative;display:inline-block;}
+.ef-star-bg{color:#4a4a4a;position:absolute;inset:0;}
+.ef-star-fillclip{position:absolute;inset:0;overflow:hidden;display:block;}
+.ef-star-fg{color:#f5c518;}
+.ef-star-hit{position:absolute;top:0;bottom:0;background:none;border:none;padding:0;z-index:3;}
+
+.ef-noresults,.ef-rows .ef-noresults{color:var(--muted);padding:30px 4vw;}
+
+.ef-footer{color:#5a5a5a;font-size:12px;text-align:center;padding:26px 4vw 40px;border-top:1px solid var(--border);}
+
+.ef-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:flex-start;justify-content:center;
+  padding:5vh 16px;z-index:60;overflow-y:auto;backdrop-filter:blur(3px);}
+.ef-modal{background:#161616;border:1px solid var(--border);border-radius:10px;width:100%;max-width:480px;padding:26px;position:relative;
+  box-shadow:0 30px 80px rgba(0,0,0,.7);}
+.ef-modal-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);display:flex;}
+.ef-modal-close:hover{color:#fff;}
+.ef-modal-h{font-size:21px;font-weight:700;margin:0 0 20px;}
+.ef-field{display:flex;flex-direction:column;gap:6px;margin-bottom:15px;}
+.ef-field>span{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px;}
+.ef-field>span em{text-transform:none;letter-spacing:0;font-style:normal;opacity:.7;}
+.ef-field input,.ef-field select,.ef-field textarea{background:var(--surface);border:1px solid var(--border);border-radius:5px;
+  padding:10px 12px;color:var(--text);font-size:14px;outline:none;transition:border .15s;font-family:inherit;}
+.ef-field input:focus,.ef-field select:focus,.ef-field textarea:focus{border-color:var(--red);}
+.ef-field textarea{resize:vertical;}
+.ef-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+.ef-typetoggle{display:flex;gap:8px;margin-bottom:15px;}
+.ef-toggle{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--surface);border:1px solid var(--border);
+  color:var(--muted);border-radius:5px;padding:9px;font-weight:600;font-size:13px;}
+.ef-toggle.on{background:var(--red);border-color:var(--red);color:#fff;}
+.ef-rate-row{display:flex;align-items:center;gap:14px;}
+.ef-clearrate{background:none;border:none;color:var(--muted);font-size:12px;text-decoration:underline;}
+.ef-clearrate:hover{color:#fff;}
+.ef-modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px;}
+
+.ef-pprev{display:flex;gap:12px;align-items:center;margin:-6px 0 15px;}
+.ef-pprev-empty{color:var(--muted);font-size:12px;margin:-6px 0 15px;}
+.ef-pprev-thumb{width:54px;height:80px;border-radius:4px;overflow:hidden;background:var(--surface2);flex:0 0 auto;border:1px solid var(--border);}
+.ef-pprev-thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:opacity .2s;}
+.ef-pprev-msg{font-size:12.5px;line-height:1.45;}
+.ef-pprev-load{color:var(--muted);}
+.ef-pprev-ok{color:#46d369;display:inline-flex;align-items:center;gap:5px;}
+.ef-pprev-err{color:#ff6b6b;display:inline-flex;align-items:flex-start;gap:5px;}
+.ef-confirm{background:#161616;border:1px solid var(--border);border-radius:10px;width:100%;max-width:380px;padding:24px;}
+.ef-confirm h3{margin:0 0 8px;font-size:18px;}
+.ef-confirm p{color:var(--muted);margin:0 0 20px;font-size:14px;}
+
+.ef-flash{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#1f1f1f;border:1px solid var(--red);
+  color:#fff;padding:12px 20px;border-radius:8px;display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;z-index:70;
+  box-shadow:0 12px 36px rgba(0,0,0,.6);animation:efpop .25s ease;}
+@keyframes efpop{from{opacity:0;transform:translate(-50%,12px);}to{opacity:1;transform:translate(-50%,0);}}
+
+@media(max-width:620px){
+  .ef-search input{width:110px;}
+  .ef-hero-title{font-size:32px;}
+  .ef-card{flex-basis:140px;width:140px;}
+  .ef-brand{font-size:20px;}
+}
+/* --- intro splash (Netflix-style reveal) --- */
+.ef-intro{position:fixed;inset:0;z-index:200;background:#000;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;animation:efIntroOut .7s ease 1.5s forwards;}
+.ef-intro-word{font-weight:800;font-size:clamp(34px,9vw,84px);letter-spacing:-2px;text-transform:uppercase;color:var(--red);
+  text-shadow:0 0 0 rgba(229,9,20,0);animation:efIntroWord 1.6s cubic-bezier(.2,.7,.2,1) forwards;}
+.ef-intro-word span{color:#fff;}
+@keyframes efIntroWord{
+  0%{opacity:0;transform:scale(.72);filter:blur(6px);text-shadow:0 0 0 rgba(229,9,20,0);}
+  45%{opacity:1;transform:scale(1.04);filter:blur(0);text-shadow:0 0 48px rgba(229,9,20,.75);}
+  70%{transform:scale(1);text-shadow:0 0 26px rgba(229,9,20,.5);}
+  100%{opacity:1;transform:scale(1.01);text-shadow:0 0 14px rgba(229,9,20,.3);}
+}
+@keyframes efIntroOut{to{opacity:0;visibility:hidden;}}
+
+/* --- staggered card reveal --- */
+.ef-reveal{animation:efReveal .55s cubic-bezier(.2,.7,.2,1) both;}
+@keyframes efReveal{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+
+/* --- cinematic hero --- */
+.ef-hero{animation:efKen 26s ease-out both;}
+@keyframes efKen{from{background-position:center 46%;}to{background-position:center 54%;}}
+.ef-hero-inner{animation:efHeroIn .8s ease .15s both;}
+@keyframes efHeroIn{from{opacity:0;transform:translateY(18px);}to{opacity:1;transform:translateY(0);}}
+
+@media(prefers-reduced-motion:reduce){
+  .ef-card-art,.ef-flash,.ef-reveal,.ef-hero,.ef-hero-inner,.ef-intro,.ef-intro-word{transition:none;animation:none;}
+  .ef-intro{display:none;}
+}
+`;
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+
+</script>
+</body>
+</html>
